@@ -1,15 +1,14 @@
 import json
 import logging
 import os
-from datetime import timedelta
 import re
 import time
+from datetime import timedelta
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
 from langchain.callbacks.base import BaseCallbackHandler
-from langchain.schema import LLMResult
+from langchain.chat_models import ChatOpenAI
 from langchain.memory import MomentoChatMessageHistory
 from langchain.schema import HumanMessage, LLMResult, SystemMessage
 from slack_bolt import App
@@ -22,12 +21,15 @@ load_dotenv()
 
 # ログ
 SlackRequestHandler.clear_all_log_handlers()
-logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
+# ボットトークンを使ってアプリを初期化します
 app = App(
     signing_secret=os.environ["SLACK_SIGNING_SECRET"],
-    token=os.environ.get("SLACK_BOT_TOKEN"),
+    token=os.environ["SLACK_BOT_TOKEN"],
     process_before_response=True,
 )
 
@@ -120,8 +122,7 @@ def just_ack(ack):
 
 app.event("app_mention")(ack=just_ack, lazy=[handle_mention])
 
-
-# アプリを起動します
+# ソケットモードハンドラーを使ってアプリを起動します
 if __name__ == "__main__":
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
 
