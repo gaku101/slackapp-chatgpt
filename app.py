@@ -6,11 +6,13 @@ import time
 from datetime import timedelta
 from typing import Any
 
+from add_document import initialize_vectorstore
 from dotenv import load_dotenv
 from langchain.callbacks.base import BaseCallbackHandler
-from langchain.chat_models import ChatOpenAI
-from langchain.memory import MomentoChatMessageHistory
-from langchain.schema import HumanMessage, LLMResult, SystemMessage
+from langchain.chains import ConversationalRetrievalChain
+from langchain_openai import ChatOpenAI
+from langchain.memory import ConversationBufferMemory, MomentoChatMessageHistory
+from langchain.schema import LLMResult
 from slack_bolt import App
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -21,9 +23,7 @@ load_dotenv()
 
 # ログ
 SlackRequestHandler.clear_all_log_handlers()
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ボットトークンを使ってアプリを初期化します
@@ -50,9 +50,7 @@ class SlackStreamingCallbackHandler(BaseCallbackHandler):
 
         now = time.time()
         if now - self.last_send_time > self.interval:
-            app.client.chat_update(
-                channel=self.channel, ts=self.ts, text=f"{self.message}\n\nTyping..."
-            )
+            app.client.chat_update(channel=self.channel, ts=self.ts, text=f"{self.message}\n\nTyping...")
             self.last_send_time = now
             self.update_count += 1
 
@@ -61,7 +59,9 @@ class SlackStreamingCallbackHandler(BaseCallbackHandler):
                 self.interval = self.interval * 2
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> Any:
-        message_context = "OpenAI APIで生成される情報は不正確または不適切な場合がありますが、当社の見解を述べるものではありません。"
+        message_context = (
+            "OpenAI APIで生成される情報は不正確または不適切な場合がありますが、当社の見解を述べるものではありません。"
+        )
         message_blocks = [
             {"type": "section", "text": {"type": "mrkdwn", "text": self.message}},
             {"type": "divider"},
@@ -97,12 +97,9 @@ def handle_mention(event, say):
         os.environ["MOMENTO_CACHE"],
         timedelta(hours=int(os.environ["MOMENTO_TTL"])),
     )
+    memory = ConversationBufferMemory(chat_memory=history, memory_key="chat_history", return_messages=True)
 
-    messages = [SystemMessage(content="You are a good assistant.")]
-    messages.extend(history.messages)
-    messages.append(HumanMessage(content=message))
-
-    history.add_user_message(message)
+    vectorstore = initialize_vectorstore()
 
     callback = SlackStreamingCallbackHandler(channel=channel, ts=ts)
     llm = ChatOpenAI(
@@ -111,9 +108,19 @@ def handle_mention(event, say):
         streaming=True,
         callbacks=[callback],
     )
+    condense_question_llm = ChatOpenAI(
+        model_name=os.environ["OPENAI_API_MODEL"],
+        temperature=os.environ["OPENAI_API_TEMPERATURE"],
+    )
 
-    ai_message = llm(messages)
-    history.add_message(ai_message)
+    qa_chain = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=vectorstore.as_retriever(),
+        memory=memory,
+        condense_question_llm=condense_question_llm,
+    )
+
+    qa_chain.invoke(message)
 
 
 def just_ack(ack):

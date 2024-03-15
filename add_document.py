@@ -1,14 +1,13 @@
 import logging
 import os
 import sys
-import time
 
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone
+from langchain_pinecone import PineconeVectorStore
 from dotenv import load_dotenv
 from langchain_community.document_loaders import UnstructuredPDFLoader
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
-from langchain_community.vectorstores import Pinecone
 
 load_dotenv()
 
@@ -17,20 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 def initialize_vectorstore():
-    pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
-    spec = ServerlessSpec(cloud="aws", region="us-west-2")
+    pinecone = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+    embeddings = OpenAIEmbeddings()
+    index = pinecone.Index(os.environ["PINECONE_INDEX"])
 
-    # check for and delete index if already exists
-    index_name = os.environ["PINECONE_INDEX"]
-    if index_name in pc.list_indexes().names():
-        pc.delete_index(index_name)
-
-    # create a new index
-    pc.create_index(index_name, dimension=1536, metric="dotproduct", spec=spec)  # dimensionality of text-embedding-ada-002
-
-    # wait for index to be initialized
-    while not pc.describe_index(index_name).status["ready"]:
-        time.sleep(1)
+    return PineconeVectorStore(index, embedding=embeddings, text_key="text")
 
 
 if __name__ == "__main__":
